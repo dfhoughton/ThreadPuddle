@@ -120,7 +120,7 @@ Here are some benchmarks, ThreadPuddle vs. ThreadPool
     warmup: 1000000; benchmark: 10000000
     ThreadPuddle milliseconds: 10672
     ThreadPool milliseconds: 29685
-    ratio puddle:pool : 2.78
+    ratio pool:puddle : 2.78
 
 TODO
 
