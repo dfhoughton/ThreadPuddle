@@ -8,9 +8,9 @@
  */
 package dfh.thread;
 
-import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,7 +71,7 @@ public class ThreadPuddle {
 	private final int limit;
 	private final AtomicBoolean dead = new AtomicBoolean(false);
 	private final AtomicBoolean flushing = new AtomicBoolean(false);
-	private final List<PuddleThread> puddle;
+	private final Deque<PuddleThread> puddle;
 	private final AtomicInteger inProcess = new AtomicInteger(0);
 
 	/**
@@ -110,7 +110,7 @@ public class ThreadPuddle {
 		if (maxTasks < threads)
 			throw new ThreadPuddleException(
 					"maxTasks must be greater than or equal to thread count");
-		puddle = new ArrayList<>(threads);
+		puddle = new ArrayDeque<>(threads);
 		limit = maxTasks;
 		for (int i = 0; i < threads; i++) {
 			puddle.add(new PuddleThread());
@@ -206,6 +206,6 @@ public class ThreadPuddle {
 	public int getPriority() {
 		if (dead.get())
 			throw new ThreadPuddleException("puddle is dead!");
-		return puddle.get(0).getPriority();
+		return puddle.getFirst().getPriority();
 	}
 }
