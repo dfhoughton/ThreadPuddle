@@ -10,7 +10,6 @@ package dfh.thread;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.LinkedList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -42,21 +41,24 @@ public class ThreadPuddle {
 
 		@Override
 		public void run() {
-			while (true) {
+			OUTER : while (!dead.get()) {
 				synchronized (taskQueue) {
-					while (taskQueue.isEmpty() && !interrupted()) {
+					while (taskQueue.isEmpty() && !dead.get()) {
 						try {
 							taskQueue.wait();
 						} catch (InterruptedException e) {
+							if (dead.get())
+								break OUTER;
+							Thread.currentThread().interrupt();
 						}
 					}
-					if (interrupted())
-						break;
 					r = taskQueue.remove();
 				}
 				try {
 					r.run();
 				} catch (Throwable t) {
+					if (t instanceof InterruptedException && dead.get())
+						break;
 					t.printStackTrace();
 				}
 				synchronized (inProcess) {
@@ -67,7 +69,7 @@ public class ThreadPuddle {
 		}
 	}
 
-	private final LinkedList<Runnable> taskQueue = new LinkedList<Runnable>();
+	private final Deque<Runnable> taskQueue = new ArrayDeque<Runnable>();
 	private final int limit;
 	private final AtomicBoolean dead = new AtomicBoolean(false);
 	private final AtomicBoolean flushing = new AtomicBoolean(false);
@@ -131,6 +133,9 @@ public class ThreadPuddle {
 				try {
 					flushing.wait();
 				} catch (InterruptedException e) {
+					if (dead.get())
+						return;
+					Thread.currentThread().interrupt();
 				}
 			}
 		}
@@ -139,7 +144,9 @@ public class ThreadPuddle {
 				try {
 					inProcess.wait();
 				} catch (InterruptedException e) {
-					return;
+					if (dead.get())
+						return;
+					Thread.currentThread().interrupt();
 				}
 			}
 			inProcess.incrementAndGet();
@@ -164,6 +171,9 @@ public class ThreadPuddle {
 					// wakes up once a second to facilitate debugging
 					inProcess.wait(1000);
 				} catch (InterruptedException e) {
+					if (dead.get())
+						return;
+					Thread.currentThread().interrupt();
 				}
 			}
 		}
