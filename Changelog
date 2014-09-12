@@ -1,4 +1,8 @@
 ThreadPuddle changelog
 
-1.0  August 13, 2013
+1.001 September 12, 2014
+  * merged in changes from jentfoo, switching Deques for Lists
+  * improved interrupt handling
+
+1.0   August 13, 2013
   * initial release
