@@ -1,8 +1,8 @@
 /*
  * dfh.thread.ThreadPuddle -- a simple, fast thread pool
- * 
+ *
  * Copyright (C) 2013 David F. Houghton
- * 
+ *
  * This software is licensed under the LGPL. Please see accompanying NOTICE file
  * and lgpl.txt.
  */
@@ -41,12 +41,12 @@ public class ThreadPuddle {
 
 		@Override
 		public void run() {
-			OUTER : while (!dead.get()) {
+			OUTER: while (!dead.get()) {
 				synchronized (taskQueue) {
 					while (taskQueue.isEmpty() && !dead.get()) {
 						try {
 							taskQueue.wait();
-						} catch (InterruptedException e) {
+						} catch (final InterruptedException e) {
 							if (dead.get())
 								break OUTER;
 							Thread.currentThread().interrupt();
@@ -56,7 +56,7 @@ public class ThreadPuddle {
 				}
 				try {
 					r.run();
-				} catch (Throwable t) {
+				} catch (final Throwable t) {
 					if (t instanceof InterruptedException && dead.get())
 						break;
 					t.printStackTrace();
@@ -69,11 +69,22 @@ public class ThreadPuddle {
 		}
 	}
 
-	private final Deque<Runnable> taskQueue = new ArrayDeque<Runnable>();
+	public static int defaultMaxTasks(final int threads) {
+		return threads * 100;
+	}
+
+	public static int defaultNumberOfThreads() {
+		return Runtime.getRuntime().availableProcessors() + 1;
+	}
+
+	private final Deque<Runnable> taskQueue = new ArrayDeque<>();
 	private final int limit;
+	private final boolean fifo;
 	private final AtomicBoolean dead = new AtomicBoolean(false);
 	private final AtomicBoolean flushing = new AtomicBoolean(false);
+
 	private final Deque<PuddleThread> puddle;
+
 	private final AtomicInteger inProcess = new AtomicInteger(0);
 
 	/**
@@ -82,80 +93,90 @@ public class ThreadPuddle {
 	 * tasks.
 	 */
 	public ThreadPuddle() {
-		this(Runtime.getRuntime().availableProcessors() + 1);
+		this(defaultNumberOfThreads());
+	}
+
+	/**
+	 * Like {@code #ThreadPuddle()}, but with control over FIFO semantics of
+	 * work queue.
+	 * 
+	 * @param fifo
+	 *            whether to use first-in-first-out semantics
+	 */
+	public ThreadPuddle(final boolean fifo) {
+		this(defaultNumberOfThreads(), fifo);
 	}
 
 	/**
 	 * Creates a puddle with the given number of threads and a task queue that
-	 * can hold 100 times this many tasks.
-	 * 
+	 * can hold 100 times this many tasks. The work queue will be
+	 * first-in-first-out.
+	 *
 	 * @param threads
 	 *            the number of threads in the puddle
 	 */
-	public ThreadPuddle(int threads) {
-		this(threads, threads * 100);
+	public ThreadPuddle(final int threads) {
+		this(threads, defaultMaxTasks(threads), true);
 	}
 
 	/**
-	 * With the given number of threads and a task queue of the given size.
+	 * Like {@link #ThreadPuddle(int)}, but providing control over FIFO
+	 * semantics of work queue.
 	 * 
+	 * @param threads
+	 *            number of threads to use
+	 * @param fifo
+	 *            whether the work queue should use first-in-first-out semantics
+	 */
+	public ThreadPuddle(final int threads, final boolean fifo) {
+		this(threads, defaultMaxTasks(threads), fifo);
+	}
+
+	/**
+	 * Creates a puddle with the given number of threads and maximum work queue
+	 * size, and first-in-first-out semantics for the work queue.
+	 * 
+	 * @param threads
+	 * @param maxTasks
+	 */
+	public ThreadPuddle(final int threads, final int maxTasks) {
+		this(threads, maxTasks, true);
+	}
+
+	/**
+	 * With the given number of threads, a task queue of the given size, and
+	 * given first-in-first-out semantics for the work queue.
+	 *
 	 * @param threads
 	 *            the number of threads in the puddle
 	 * @param maxTasks
 	 *            the number of tasks awaiting execution that the puddle can
 	 *            hold before {@link #run(Runnable)} blocks until more space is
 	 *            available.
+	 * @param fifo
+	 *            whether to use a first-in-first-out work queue
 	 */
-	public ThreadPuddle(int threads, int maxTasks) {
+	public ThreadPuddle(final int threads, final int maxTasks, final boolean fifo) {
 		if (threads < 1)
 			throw new ThreadPuddleException("thread count must be positive");
 		if (maxTasks < threads)
-			throw new ThreadPuddleException(
-					"maxTasks must be greater than or equal to thread count");
+			throw new ThreadPuddleException("maxTasks must be greater than or equal to thread count");
 		puddle = new ArrayDeque<>(threads);
 		limit = maxTasks;
+		this.fifo = fifo;
 		for (int i = 0; i < threads; i++) {
 			puddle.add(new PuddleThread());
 		}
 	}
 
 	/**
-	 * Submits a task to the puddle.
-	 * 
-	 * @param r
-	 *            the task to run
+	 * Interrupt all threads and mark the puddle as dead. A dead puddle cannot
+	 * be used further as all of its threads will be interrupted.
 	 */
-	public void run(Runnable r) {
-		if (dead.get())
-			throw new ThreadPuddleException("puddle is dead!");
-		synchronized (flushing) {
-			while (flushing.get()) {
-				try {
-					flushing.wait();
-				} catch (InterruptedException e) {
-					if (dead.get())
-						return;
-					Thread.currentThread().interrupt();
-				}
-			}
-		}
-		synchronized (inProcess) {
-			while (inProcess.get() == limit) {
-				try {
-					inProcess.wait();
-				} catch (InterruptedException e) {
-					if (dead.get())
-						return;
-					Thread.currentThread().interrupt();
-				}
-			}
-			inProcess.incrementAndGet();
-			synchronized (taskQueue) {
-				taskQueue.add(r);
-				taskQueue.notifyAll();
-			}
-			inProcess.notifyAll();
-		}
+	public void die() {
+		dead.set(true);
+		for (final PuddleThread pt : puddle)
+			pt.interrupt();
 	}
 
 	/**
@@ -170,7 +191,7 @@ public class ThreadPuddle {
 				try {
 					// wakes up once a second to facilitate debugging
 					inProcess.wait(1000);
-				} catch (InterruptedException e) {
+				} catch (final InterruptedException e) {
 					if (dead.get())
 						return;
 					Thread.currentThread().interrupt();
@@ -184,38 +205,83 @@ public class ThreadPuddle {
 	}
 
 	/**
-	 * Interrupt all threads and mark the puddle as dead. A dead puddle cannot
-	 * be used further as all of its threads will be interrupted.
-	 */
-	public void die() {
-		dead.set(true);
-		for (PuddleThread pt : puddle)
-			pt.interrupt();
-	}
-
-	/**
-	 * Set the priority for all threads in the puddle. See
-	 * {@link Thread#setPriority(int)}.
-	 * 
-	 * @param priority
-	 *            thread priority
-	 */
-	public void setPriority(int priority) {
-		if (dead.get())
-			throw new ThreadPuddleException("puddle is dead!");
-		for (Thread t : puddle)
-			t.setPriority(priority);
-	}
-
-	/**
 	 * Get the priority of all the threads in the puddle. See
 	 * {@link Thread#getPriority()}.
-	 * 
+	 *
 	 * @return thread priority
 	 */
 	public int getPriority() {
 		if (dead.get())
 			throw new ThreadPuddleException("puddle is dead!");
 		return puddle.getFirst().getPriority();
+	}
+
+	/**
+	 * Submits a task to the puddle.
+	 * 
+	 * @param r
+	 *            task
+	 */
+	public void run(final Runnable r) {
+		run(r, fifo);
+	}
+
+	/**
+	 * Submits a task to the puddle.
+	 *
+	 * @param r
+	 *            the task to run
+	 * @param fifo
+	 *            whether to enqueue the work at the end of the queue
+	 *            ({@code true}), or beginning ({@code false})
+	 */
+	public void run(final Runnable r, final boolean fifo) {
+		if (dead.get())
+			throw new ThreadPuddleException("puddle is dead!");
+		synchronized (flushing) {
+			while (flushing.get()) {
+				try {
+					flushing.wait();
+				} catch (final InterruptedException e) {
+					if (dead.get())
+						return;
+					Thread.currentThread().interrupt();
+				}
+			}
+		}
+		synchronized (inProcess) {
+			while (inProcess.get() == limit) {
+				try {
+					inProcess.wait();
+				} catch (final InterruptedException e) {
+					if (dead.get())
+						return;
+					Thread.currentThread().interrupt();
+				}
+			}
+			inProcess.incrementAndGet();
+			synchronized (taskQueue) {
+				if (fifo)
+					taskQueue.addLast(r);
+				else
+					taskQueue.addFirst(r);
+				taskQueue.notifyAll();
+			}
+			inProcess.notifyAll();
+		}
+	}
+
+	/**
+	 * Set the priority for all threads in the puddle. See
+	 * {@link Thread#setPriority(int)}.
+	 *
+	 * @param priority
+	 *            thread priority
+	 */
+	public void setPriority(final int priority) {
+		if (dead.get())
+			throw new ThreadPuddleException("puddle is dead!");
+		for (final Thread t : puddle)
+			t.setPriority(priority);
 	}
 }

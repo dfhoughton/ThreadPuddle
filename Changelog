@@ -1,5 +1,8 @@
 ThreadPuddle changelog
 
+1.002 July 17, 2016
+  * added optional LIFO semantics for work queue
+
 1.001 September 12, 2014
   * merged in changes from jentfoo, switching Deques for Lists
   * improved interrupt handling
