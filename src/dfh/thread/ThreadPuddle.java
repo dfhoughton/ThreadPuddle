@@ -79,13 +79,14 @@ public class ThreadPuddle {
 
 	private final Deque<Runnable> taskQueue = new ArrayDeque<>();
 	private final int limit;
-	private final boolean fifo;
+	public final boolean fifo;
 	private final AtomicBoolean dead = new AtomicBoolean(false);
 	private final AtomicBoolean flushing = new AtomicBoolean(false);
 
 	private final Deque<PuddleThread> puddle;
 
 	private final AtomicInteger inProcess = new AtomicInteger(0);
+	public final boolean limitless;
 
 	/**
 	 * Creates a puddle with one more threads than there are cores available on
@@ -97,17 +98,6 @@ public class ThreadPuddle {
 	}
 
 	/**
-	 * Like {@code #ThreadPuddle()}, but with control over FIFO semantics of
-	 * work queue.
-	 * 
-	 * @param fifo
-	 *            whether to use first-in-first-out semantics
-	 */
-	public ThreadPuddle(final boolean fifo) {
-		this(defaultNumberOfThreads(), fifo);
-	}
-
-	/**
 	 * Creates a puddle with the given number of threads and a task queue that
 	 * can hold 100 times this many tasks. The work queue will be
 	 * first-in-first-out.
@@ -116,20 +106,7 @@ public class ThreadPuddle {
 	 *            the number of threads in the puddle
 	 */
 	public ThreadPuddle(final int threads) {
-		this(threads, defaultMaxTasks(threads), true);
-	}
-
-	/**
-	 * Like {@link #ThreadPuddle(int)}, but providing control over FIFO
-	 * semantics of work queue.
-	 * 
-	 * @param threads
-	 *            number of threads to use
-	 * @param fifo
-	 *            whether the work queue should use first-in-first-out semantics
-	 */
-	public ThreadPuddle(final int threads, final boolean fifo) {
-		this(threads, defaultMaxTasks(threads), fifo);
+		this(threads, defaultMaxTasks(threads), true, false);
 	}
 
 	/**
@@ -140,23 +117,10 @@ public class ThreadPuddle {
 	 * @param maxTasks
 	 */
 	public ThreadPuddle(final int threads, final int maxTasks) {
-		this(threads, maxTasks, true);
+		this(threads, maxTasks, true, false);
 	}
 
-	/**
-	 * With the given number of threads, a task queue of the given size, and
-	 * given first-in-first-out semantics for the work queue.
-	 *
-	 * @param threads
-	 *            the number of threads in the puddle
-	 * @param maxTasks
-	 *            the number of tasks awaiting execution that the puddle can
-	 *            hold before {@link #run(Runnable)} blocks until more space is
-	 *            available.
-	 * @param fifo
-	 *            whether to use a first-in-first-out work queue
-	 */
-	public ThreadPuddle(final int threads, final int maxTasks, final boolean fifo) {
+	ThreadPuddle(final int threads, final int maxTasks, final boolean fifo, final boolean limitless) {
 		if (threads < 1)
 			throw new ThreadPuddleException("thread count must be positive");
 		if (maxTasks < threads)
@@ -164,6 +128,7 @@ public class ThreadPuddle {
 		puddle = new ArrayDeque<>(threads);
 		limit = maxTasks;
 		this.fifo = fifo;
+		this.limitless = limitless;
 		for (int i = 0; i < threads; i++) {
 			puddle.add(new PuddleThread());
 		}
@@ -186,6 +151,20 @@ public class ThreadPuddle {
 	 */
 	public void flush() {
 		flushing.set(true);
+		finish();
+		if (dead.get())
+			return;
+		synchronized (flushing) {
+			flushing.set(false);
+			flushing.notifyAll();
+		}
+	}
+
+	/**
+	 * Wait until there are no enqueued tasks. This is like {@link #flush()},
+	 * except it doesn't pause the fresh enqueuing of tasks.
+	 */
+	public void finish() {
 		synchronized (inProcess) {
 			while (inProcess.get() > 0) {
 				try {
@@ -193,14 +172,10 @@ public class ThreadPuddle {
 					inProcess.wait(1000);
 				} catch (final InterruptedException e) {
 					if (dead.get())
-						return;
+						break;
 					Thread.currentThread().interrupt();
 				}
 			}
-		}
-		synchronized (flushing) {
-			flushing.set(false);
-			flushing.notifyAll();
 		}
 	}
 
@@ -250,13 +225,15 @@ public class ThreadPuddle {
 			}
 		}
 		synchronized (inProcess) {
-			while (inProcess.get() == limit) {
-				try {
-					inProcess.wait();
-				} catch (final InterruptedException e) {
-					if (dead.get())
-						return;
-					Thread.currentThread().interrupt();
+			if (!limitless) {
+				while (inProcess.get() == limit) {
+					try {
+						inProcess.wait();
+					} catch (final InterruptedException e) {
+						if (dead.get())
+							return;
+						Thread.currentThread().interrupt();
+					}
 				}
 			}
 			inProcess.incrementAndGet();

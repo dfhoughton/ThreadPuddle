@@ -1,5 +1,10 @@
 ThreadPuddle changelog
 
+2.000 July 24, 2016
+  * added builder to facility more complicated configuration
+  * added option of limitless work queue
+  * added finish method which blocks until all work is complete without blocking the addition of new work
+
 1.002 July 17, 2016
   * added optional LIFO semantics for work queue
 
